@@ -27,11 +27,13 @@ jobs:
           java-version: "21"
 
       - uses: android-actions/setup-android@v3
+        with:
+          packages: ""
 
       - name: Install SDK packages the app needs
         run: |
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          sdkmanager "platforms;android-37.0" "build-tools;37.0.0" >/dev/null
+          sdkmanager "platform-tools" "platforms;android-37.0" "build-tools;37.0.0" >/dev/null
 
       - name: Build + unit tests
         run: ./gradlew testDebugUnitTest assembleDebug
