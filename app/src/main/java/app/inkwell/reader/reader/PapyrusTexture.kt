@@ -7,9 +7,9 @@ import kotlin.math.hypot
 import kotlin.random.Random
 
 /**
- * Supplies a papyrus/parchment page texture for the Papyrus theme. Uses the user-supplied
- * `assets/papyrus.jpg` if present; otherwise generates a soft procedural parchment so the
- * theme works out of the box.
+ * Supplies a papyrus/parchment page texture for the Papyrus theme. Uses the bundled
+ * `assets/papyrus.png` (or `.jpg`) if present; otherwise generates a soft procedural parchment
+ * so the theme still works.
  */
 object PapyrusTexture {
     @Volatile private var cached: Bitmap? = null
@@ -18,9 +18,13 @@ object PapyrusTexture {
         cached?.let { return it }
         synchronized(this) {
             cached?.let { return it }
-            val fromAsset = runCatching {
-                context.assets.open("papyrus.jpg").use { BitmapFactory.decodeStream(it) }
-            }.getOrNull()
+            val fromAsset = sequenceOf("papyrus.png", "papyrus.jpg", "papyrus.jpeg")
+                .mapNotNull { name ->
+                    runCatching {
+                        context.assets.open(name).use { BitmapFactory.decodeStream(it) }
+                    }.getOrNull()
+                }
+                .firstOrNull()
             val bmp = fromAsset ?: generate()
             cached = bmp
             return bmp

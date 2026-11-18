@@ -8,6 +8,7 @@ import app.inkwell.reader.core.TocEntry
 import org.jsoup.Jsoup
 import org.readium.r2.shared.publication.Link
 import org.readium.r2.shared.publication.Publication
+import org.readium.r2.shared.util.Url
 import org.readium.r2.shared.util.asset.AssetRetriever
 import org.readium.r2.shared.util.http.DefaultHttpClient
 import org.readium.r2.shared.util.toUrl
@@ -34,6 +35,8 @@ object ReadiumEpubParser {
             val readingOrder = publication.readingOrder
             val chapters = ArrayList<Chapter>()
             val hrefToIndex = HashMap<String, Int>()
+            // Distinct image hrefs (absolute within the publication) → the Url to read them from.
+            val imageUrls = LinkedHashMap<String, Url>()
 
             readingOrder.forEachIndexed { index, link ->
                 hrefToIndex[normHref(link)] = index
@@ -42,13 +45,32 @@ object ReadiumEpubParser {
                     return@forEachIndexed
                 }
                 val doc = Jsoup.parse(html)
-                val blocks = HtmlToRich.convert(doc.body())
+                val base = link.url()
+                val blocks = HtmlToRich.convert(doc.body()).map { b ->
+                    val ref = b.imageRef ?: return@map b
+                    val resolved = runCatching { base.resolve(Url(ref)!!) }.getOrNull()
+                        ?: return@map b
+                    val key = resolved.toString()
+                    imageUrls[key] = resolved
+                    b.copy(imageRef = key)
+                }
                 val title = doc.body().selectFirst("h1, h2, h3")?.text()?.take(80)
                 chapters += Chapter("r-$index", title, blocks)
             }
 
+            // Pre-read image bytes now, while the publication is still open.
+            val imageBytes = HashMap<String, ByteArray>(imageUrls.size)
+            for ((key, url) in imageUrls) {
+                val resource = publication.get(url) ?: continue
+                val bytes = resource.read().getOrNull()
+                resource.close()
+                if (bytes != null) imageBytes[key] = bytes
+            }
+            val resolver: (suspend (String) -> ByteArray?)? =
+                if (imageBytes.isEmpty()) null else { ref -> imageBytes[ref] }
+
             val toc = buildToc(publication, hrefToIndex, chapters)
-            return BookContent.Reflowable(meta, toc, chapters)
+            return BookContent.Reflowable(meta, toc, chapters, imageResolver = resolver)
         } finally {
             runCatching { publication.close() }
         }

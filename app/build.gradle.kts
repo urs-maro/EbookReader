@@ -6,6 +6,9 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// Built APKs are named CRIO-Books-Reader-<variant>.apk instead of app-<variant>.apk.
+base.archivesName.set("CRIO-Books-Reader")
+
 // Load signing config from keystore.properties (not committed) if present.
 val keystorePropsFile = rootProject.file("keystore.properties")
 val keystoreProps = Properties().apply {
@@ -17,6 +20,14 @@ android {
     compileSdk = 37
 
     signingConfigs {
+        // Fixed signing key committed to the repo: every build (local, cloud, CI) is signed the
+        // same way, so updates install over the previous version without uninstalling first.
+        getByName("debug") {
+            storeFile = file("crio-books.keystore")
+            storePassword = "criobooks"
+            keyAlias = "criobooks"
+            keyPassword = "criobooks"
+        }
         if (!keystoreProps.isEmpty) {
             create("release") {
                 storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))
@@ -31,8 +42,8 @@ android {
         applicationId = "app.inkwell.reader"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
-        versionName = "0.1.0"
+        versionCode = 3
+        versionName = "0.3.0"
         vectorDrawables { useSupportLibrary = true }
     }
 
@@ -83,6 +94,8 @@ dependencies {
     implementation(libs.readium.streamer)
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+
+    testImplementation("junit:junit:4.13.2")
 
     debugImplementation(libs.androidx.ui.tooling)
 }
