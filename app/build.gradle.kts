@@ -20,6 +20,14 @@ android {
     compileSdk = 37
 
     signingConfigs {
+        // Fixed signing key committed to the repo: every build (local, cloud, CI) is signed the
+        // same way, so updates install over the previous version without uninstalling first.
+        getByName("debug") {
+            storeFile = file("crio-books.keystore")
+            storePassword = "criobooks"
+            keyAlias = "criobooks"
+            keyPassword = "criobooks"
+        }
         if (!keystoreProps.isEmpty) {
             create("release") {
                 storeFile = rootProject.file(keystoreProps.getProperty("storeFile"))

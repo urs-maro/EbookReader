@@ -12,5 +12,7 @@ crio-release.jks
 keystore.properties
 *.jks
 *.keystore
+# ...except the fixed debug key, deliberately committed so updates install without uninstalling.
+!app/crio-books.keystore
 
 .kotlin/
