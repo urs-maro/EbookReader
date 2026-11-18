@@ -1,18 +1,24 @@
 package app.inkwell.reader.reader
 
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.TextMeasurer
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.Constraints
 import app.inkwell.reader.core.BlockKind
 import app.inkwell.reader.core.Chapter
-import app.inkwell.reader.core.RichBlock
 
-/** A single text run placed on a page (may be a whole paragraph or a fragment of one). */
+/**
+ * A single item placed on a page. Usually a text run (a whole paragraph or a fragment of one);
+ * when [image] is set it is an inline image drawn at [imageWidthPx] x [imageHeightPx] instead.
+ */
 data class PageItem(
-    val text: AnnotatedString,
-    val style: TextStyle,
-    val spacingBeforePx: Float,
+    val text: AnnotatedString = AnnotatedString(""),
+    val style: TextStyle = TextStyle.Default,
+    val spacingBeforePx: Float = 0f,
+    val image: ImageBitmap? = null,
+    val imageWidthPx: Int = 0,
+    val imageHeightPx: Int = 0,
 )
 
 /** One laid-out page: the items to stack, plus the block index it starts at (for position save). */
@@ -23,7 +29,8 @@ data class Page(
 
 /**
  * Lays reflowable chapter content out into fixed-size pages by measuring with [measurer] and
- * splitting paragraphs at line boundaries so text flows exactly like a paper book.
+ * splitting paragraphs at line boundaries so text flows exactly like a paper book. Inline
+ * [BlockKind.IMAGE] blocks are placed whole, scaled to fit, using the decoded [images] map.
  */
 class Paginator(
     private val measurer: TextMeasurer,
@@ -32,6 +39,7 @@ class Paginator(
     private val styleFor: (BlockKind) -> TextStyle,
     private val paragraphSpacingPx: Float,
     private val headingSpacingPx: Float,
+    private val images: Map<String, ImageBitmap> = emptyMap(),
 ) {
     fun paginate(chapter: Chapter): List<Page> {
         if (widthPx <= 0 || heightPx <= 0) return emptyList()
@@ -49,7 +57,20 @@ class Paginator(
         }
 
         chapter.blocks.forEachIndexed { blockIndex, block ->
-            if (block.kind == BlockKind.IMAGE) return@forEachIndexed // images skipped in v1 flow
+            if (block.kind == BlockKind.IMAGE) {
+                val img = block.imageRef?.let { images[it] } ?: return@forEachIndexed
+                val (dw, dh) = fitImageSize(img.width, img.height, widthPx, heightPx)
+                if (dw <= 0 || dh <= 0) return@forEachIndexed
+                // Keep the image whole: if it does not fit the rest of the page, start a new one.
+                if (current.isNotEmpty() && used + paragraphSpacingPx + dh > heightPx) flush()
+                if (current.isEmpty()) pageStartBlock = blockIndex
+                val spacing = if (current.isEmpty()) 0f else paragraphSpacingPx
+                current.add(
+                    PageItem(spacingBeforePx = spacing, image = img, imageWidthPx = dw, imageHeightPx = dh),
+                )
+                used += spacing + dh
+                return@forEachIndexed
+            }
             if (current.isEmpty()) pageStartBlock = blockIndex
 
             if (block.kind == BlockKind.SEPARATOR) {

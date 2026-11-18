@@ -17,7 +17,7 @@ import app.inkwell.reader.ui.theme.toFontFamily
 /** Builds a [PaginatedBook] from parsed [BookContent] for the current size + reading settings. */
 object BookPaginationBuilder {
 
-    fun build(
+    suspend fun build(
         content: BookContent,
         settings: ReadingSettings,
         size: IntSize,
@@ -33,7 +33,7 @@ object BookPaginationBuilder {
         }
     }
 
-    private fun buildReflow(
+    private suspend fun buildReflow(
         content: BookContent.Reflowable,
         settings: ReadingSettings,
         size: IntSize,
@@ -77,6 +77,8 @@ object BookPaginationBuilder {
             )
         }
 
+        val images = decodeImages(content, contentW, contentH)
+
         val paginator = Paginator(
             measurer = measurer,
             widthPx = contentW,
@@ -84,6 +86,7 @@ object BookPaginationBuilder {
             styleFor = ::style,
             paragraphSpacingPx = fontPx * 0.55f,
             headingSpacingPx = fontPx * 1.1f,
+            images = images,
         )
 
         val flat = ArrayList<Pair<Int, Page>>()
@@ -104,5 +107,29 @@ object BookPaginationBuilder {
             density = density,
             backgroundImage = pageTexture,
         )
+    }
+
+    /** Resolves and decodes every distinct inline image referenced by the chapters. */
+    private suspend fun decodeImages(
+        content: BookContent.Reflowable,
+        maxW: Int,
+        maxH: Int,
+    ): Map<String, androidx.compose.ui.graphics.ImageBitmap> {
+        val resolver = content.imageResolver ?: return emptyMap()
+        val refs = content.chapters
+            .asSequence()
+            .flatMap { it.blocks.asSequence() }
+            .filter { it.kind == BlockKind.IMAGE }
+            .mapNotNull { it.imageRef }
+            .distinct()
+            .toList()
+        if (refs.isEmpty()) return emptyMap()
+        val out = HashMap<String, androidx.compose.ui.graphics.ImageBitmap>(refs.size)
+        for (ref in refs) {
+            val bytes = runCatching { resolver(ref) }.getOrNull() ?: continue
+            val img = ImageDecoder.decode(bytes, maxW, maxH) ?: continue
+            out[ref] = img
+        }
+        return out
     }
 }

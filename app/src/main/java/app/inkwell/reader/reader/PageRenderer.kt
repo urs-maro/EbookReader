@@ -44,6 +44,20 @@ object PageRenderer {
             var y = marginYPx
             for (item in page.items) {
                 y += item.spacingBeforePx
+                val img = item.image
+                if (img != null) {
+                    // Centre the image horizontally within the content column.
+                    val left = marginXPx + (contentWidth - item.imageWidthPx) / 2f
+                    drawImage(
+                        img,
+                        dstOffset = androidx.compose.ui.unit.IntOffset(
+                            left.toInt().coerceAtLeast(0), y.toInt(),
+                        ),
+                        dstSize = androidx.compose.ui.unit.IntSize(item.imageWidthPx, item.imageHeightPx),
+                    )
+                    y += item.imageHeightPx
+                    continue
+                }
                 val layout = measurer.measure(
                     item.text,
                     item.style,
