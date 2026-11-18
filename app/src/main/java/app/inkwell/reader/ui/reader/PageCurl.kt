@@ -1,7 +1,10 @@
 package app.inkwell.reader.ui.reader
 
+import android.graphics.BlurMaskFilter
 import android.graphics.LinearGradient
 import android.graphics.Paint
+import android.graphics.Path
+import android.graphics.RadialGradient
 import android.graphics.Shader
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
@@ -129,14 +132,26 @@ fun PageCurl(
                 d < 0f && index < book.pageCount - 1 -> {
                     val next = bitmaps[index + 1]
                     val p = (abs(d) / w).coerceIn(0f, 1f)
-                    if (!curlEnabled || next == null) drawSlide(current, next, d, background)
-                    else drawFold(current, next, p, background, fromRight = true)
+                    when {
+                        !curlEnabled || next == null -> drawSlide(current, next, d, background)
+                        anchorY in 0.40f..0.60f -> drawFold(current, next, p, background, fromRight = true)
+                        else -> drawCornerCurl(
+                            current, next, p, background,
+                            cornerRight = true, cornerBottom = anchorY > 0.5f,
+                        )
+                    }
                 }
                 d > 0f && index > 0 -> {
                     val prev = bitmaps[index - 1]
                     val p = (d / w).coerceIn(0f, 1f)
-                    if (!curlEnabled || prev == null) drawSlide(prev, current, d - w, background)
-                    else drawFold(current, prev, p, background, fromRight = false)
+                    when {
+                        !curlEnabled || prev == null -> drawSlide(prev, current, d - w, background)
+                        anchorY in 0.40f..0.60f -> drawFold(current, prev, p, background, fromRight = false)
+                        else -> drawCornerCurl(
+                            current, prev, p, background,
+                            cornerRight = false, cornerBottom = anchorY > 0.5f,
+                        )
+                    }
                 }
                 else -> drawImageFit(current)
             }
@@ -287,6 +302,125 @@ private fun DrawScope.drawFold(
         // 5. crisp crease highlight exactly on the fold.
         val crease = Paint().apply { color = android.graphics.Color.argb(72, 255, 255, 255) }
         nc.drawRect(foldX - 1f, 0f, foldX + 0.6f, h, crease)
+    }
+}
+
+/**
+ * Corner page-curl. The grabbed corner of the [folded] page rolls back on itself — showing its
+ * glossy, cylinder-shaded blank back — while the [under] page is revealed in the uncovered
+ * triangle, with a soft drop shadow. [cornerRight]/[cornerBottom] pick which of the four corners
+ * lifts (driven by the drag side + where the page was grabbed); [p] is turn progress (0..1).
+ */
+private fun DrawScope.drawCornerCurl(
+    folded: ImageBitmap,
+    under: ImageBitmap,
+    p: Float,
+    bg: Color,
+    cornerRight: Boolean,
+    cornerBottom: Boolean,
+) {
+    val w = size.width
+    val h = size.height
+    if (p <= 0.004f) { drawImageFit(folded); return }
+
+    val foldedBmp = folded.asAndroidBitmap()
+    val underBmp = under.asAndroidBitmap()
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { isFilterBitmap = true }
+
+    // Curl size grows with the turn; the fold line is x+y-style diagonal through the corner.
+    val l = (p * (w + h)).coerceAtLeast(1f)
+    val sx = if (cornerRight) 1f else -1f
+    val sy = if (cornerBottom) 1f else -1f
+    val cornerX = if (cornerRight) w else 0f
+    val cornerY = if (cornerBottom) h else 0f
+    val ax = cornerX; val ay = cornerY - sy * l            // fold end on the vertical edge
+    val bx = cornerX - sx * l; val by = cornerY            // fold end on the horizontal edge
+    val cix = cornerX - sx * l; val ciy = cornerY - sy * l // reflected corner = curl tip
+    val mx = (ax + bx) / 2f; val my = (ay + by) / 2f       // mid-fold
+
+    val pr = (bg.red * 255f).toInt().coerceIn(0, 255)
+    val pg = (bg.green * 255f).toInt().coerceIn(0, 255)
+    val pb = (bg.blue * 255f).toInt().coerceIn(0, 255)
+    fun paperShade(s: Float): Int = if (s <= 1f) {
+        (0xFF shl 24) or ((pr * s).toInt().coerceIn(0, 255) shl 16) or
+            ((pg * s).toInt().coerceIn(0, 255) shl 8) or (pb * s).toInt().coerceIn(0, 255)
+    } else {
+        val t = ((s - 1f) * 5f).coerceIn(0f, 1f)
+        fun up(c: Int) = (c + (255 - c) * t).toInt().coerceIn(0, 255)
+        (0xFF shl 24) or (up(pr) shl 16) or (up(pg) shl 8) or up(pb)
+    }
+
+    drawIntoCanvas { canvas ->
+        val nc = canvas.nativeCanvas
+        val full = android.graphics.RectF(0f, 0f, w, h)
+
+        // 1. the current page, whole.
+        nc.drawBitmap(foldedBmp, null, full, paint)
+
+        // 2. revealed page in the corner triangle, plus a soft shadow cast into the fold.
+        val reveal = Path().apply {
+            moveTo(ax, ay); lineTo(cornerX, cornerY); lineTo(bx, by); close()
+        }
+        nc.save()
+        nc.clipPath(reveal)
+        nc.drawBitmap(underBmp, null, full, paint)
+        Paint().apply {
+            shader = RadialGradient(
+                mx, my, (l * 0.62f).coerceAtLeast(1f),
+                android.graphics.Color.argb(92, 0, 0, 0),
+                android.graphics.Color.TRANSPARENT, Shader.TileMode.CLAMP,
+            )
+        }.also { nc.drawRect(0f, 0f, w, h, it) }
+        nc.restore()
+
+        // outer silhouette of the curl (a slightly bowed edge from A to B through near the corner).
+        val ctrlX = cornerX - sx * l * 0.16f
+        val ctrlY = cornerY - sy * l * 0.16f
+        val flap = Path().apply {
+            moveTo(ax, ay)
+            quadTo(ctrlX, ctrlY, bx, by)
+            lineTo(cix, ciy)
+            close()
+        }
+
+        // 3. soft drop shadow the lifted corner casts.
+        Paint().apply {
+            color = android.graphics.Color.argb(80, 0, 0, 0)
+            maskFilter = BlurMaskFilter((l * 0.07f).coerceIn(3f, 40f), BlurMaskFilter.Blur.NORMAL)
+            isAntiAlias = true
+        }.also {
+            nc.save()
+            nc.translate(sx * l * 0.03f, sy * l * 0.03f)
+            nc.drawPath(flap, it)
+            nc.restore()
+        }
+
+        // 4. the curled flap: blank paper shaded like a half-cylinder (dark base → bright ridge → tip).
+        nc.save()
+        nc.clipPath(flap)
+        Paint().apply {
+            shader = LinearGradient(
+                mx, my, cix, ciy,
+                intArrayOf(
+                    paperShade(0.74f), paperShade(0.88f), paperShade(1.08f),
+                    paperShade(0.93f), paperShade(0.78f),
+                ),
+                floatArrayOf(0f, 0.22f, 0.5f, 0.8f, 1f),
+                Shader.TileMode.CLAMP,
+            )
+        }.also { nc.drawRect(0f, 0f, w, h, it) }
+        nc.restore()
+
+        // 5. a faint outline on the rolled edge for crispness.
+        Paint().apply {
+            style = Paint.Style.STROKE
+            strokeWidth = 1.2f
+            color = android.graphics.Color.argb(34, 0, 0, 0)
+            isAntiAlias = true
+        }.also {
+            val edge = Path().apply { moveTo(ax, ay); quadTo(ctrlX, ctrlY, bx, by) }
+            nc.drawPath(edge, it)
+        }
     }
 }
 
