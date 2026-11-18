@@ -6,6 +6,9 @@ plugins {
     alias(libs.plugins.kotlin.serialization)
 }
 
+// Built APKs are named CRIO-Books-Reader-<variant>.apk instead of app-<variant>.apk.
+base.archivesName.set("CRIO-Books-Reader")
+
 // Load signing config from keystore.properties (not committed) if present.
 val keystorePropsFile = rootProject.file("keystore.properties")
 val keystoreProps = Properties().apply {
