@@ -83,7 +83,7 @@ object PdfSupport {
                 val stripper = PDFTextStripper().apply {
                     startPage = page
                     endPage = end
-                    paragraphStart = " "
+                    paragraphStart = " "
                 }
                 val raw = runCatching { stripper.getText(doc) }.getOrDefault("")
                 val blocks = reflowText(raw)
@@ -102,39 +102,78 @@ object PdfSupport {
     }
 
     /**
-     * Turns raw extracted PDF text into paragraphs. PDF text comes line-wrapped at the
-     * original layout width, so we rejoin lines into paragraphs, undo hyphenation, and
-     * split on blank lines / large gaps.
+     * Turns raw extracted PDF text into styled paragraphs ready for the reflowable paginator.
+     * The heavy lifting lives in [reflowParagraphs], which is kept free of Compose types so it
+     * can be unit-tested on the JVM; this is a thin adapter that wraps the result in text spans.
      */
-    fun reflowText(raw: String): List<RichBlock> {
+    fun reflowText(raw: String): List<RichBlock> =
+        reflowParagraphs(raw).map { RichBlock(it.kind, AnnotatedString(it.text)) }
+
+    /** A reflowed paragraph before styling — plain data so it is testable without Compose. */
+    data class ReflowBlock(val kind: BlockKind, val text: String)
+
+    /**
+     * Rejoins PDF text — which comes line-wrapped at the original layout width — into
+     * paragraphs: it undoes end-of-line hyphenation, drops page-number / folio noise, and
+     * classifies chapter headings (Romanian + Greek markers, or all-caps lines).
+     */
+    fun reflowParagraphs(raw: String): List<ReflowBlock> {
         if (raw.isBlank()) return emptyList()
-        val normalized = raw.replace("\r\n", "\n").replace(' ', '\n')
+        val normalized = raw.replace("\r\n", "\n").replace(' ', '\n')
         val paragraphs = normalized.split(Regex("\n[ \t]*\n+"))
-        val out = ArrayList<RichBlock>()
+        val out = ArrayList<ReflowBlock>()
         for (p in paragraphs) {
-            val lines = p.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
-            if (lines.isEmpty()) continue
-            val sb = StringBuilder()
-            for ((i, line) in lines.withIndex()) {
-                if (i > 0) {
-                    val prev = sb.toString()
-                    if (prev.endsWith("-") && prev.length > 1 && prev[prev.length - 2].isLetter()) {
-                        sb.deleteCharAt(sb.length - 1) // de-hyphenate
-                    } else if (prev.isNotEmpty() && !prev.endsWith(' ')) {
-                        sb.append(' ')
-                    }
-                }
-                sb.append(line)
-            }
-            val merged = sb.toString().trim()
-            if (merged.isNotEmpty()) {
-                val kind = if (merged.length < 60 && merged == merged.uppercase() &&
-                    merged.any { it.isLetter() }
-                ) BlockKind.HEADING else BlockKind.BODY
-                out += RichBlock(kind, AnnotatedString(merged))
-            }
+            val merged = mergeWrappedLines(p) ?: continue
+            val kind = classify(merged) ?: continue // null → dropped as page noise
+            out += ReflowBlock(kind, merged)
         }
         return out
+    }
+
+    /** Rejoins the wrapped lines of a single paragraph, undoing end-of-line hyphenation. */
+    private fun mergeWrappedLines(paragraph: String): String? {
+        val lines = paragraph.split('\n').map { it.trim() }.filter { it.isNotEmpty() }
+        if (lines.isEmpty()) return null
+        val sb = StringBuilder()
+        for ((i, line) in lines.withIndex()) {
+            if (i > 0) {
+                val prev = sb.toString()
+                if (prev.endsWith("-") && prev.length > 1 && prev[prev.length - 2].isLetter()) {
+                    sb.deleteCharAt(sb.length - 1) // de-hyphenate across the line break
+                } else if (prev.isNotEmpty() && !prev.endsWith(' ')) {
+                    sb.append(' ')
+                }
+            }
+            sb.append(line)
+        }
+        return sb.toString().trim().ifEmpty { null }
+    }
+
+    /** Only digits, roman numerals and punctuation — a running page number / folio. */
+    private val pageNoise = Regex("^[\\p{Nd}ivxlcdmIVXLCDM.,:;·•\\-–—()\\[\\]\\s]+$")
+    private val chapterMarker = Regex(
+        "^(CAP(ITOLUL|\\.)?|PARTEA|CARTEA|VOLUMUL|SEC[ȚT]IUNEA|PROLOG|EPILOG|" +
+            "PREFA[ȚT][AĂ]|INTRODUCERE|ΚΕΦΑΛΑΙΟ|ΜΕΡΟΣ|ΠΡΟΛΟΓΟΣ|ΕΠΙΛΟΓΟΣ)\\b.*",
+        RegexOption.IGNORE_CASE,
+    )
+
+    /**
+     * Classifies a merged paragraph, or returns null when it is page-number / folio noise that
+     * should be dropped from the flow. Conservative on purpose: only clear chapter markers and
+     * fully upper-case short lines become headings, so body text is never misclassified.
+     */
+    fun classify(text: String): BlockKind? {
+        val t = text.trim()
+        if (t.isEmpty()) return null
+        if (t.length <= 12 && (t.none { it.isLetter() } || pageNoise.matches(t))) return null
+        val isShort = t.length < 60
+        val letters = t.filter { it.isLetter() }
+        val allCaps = letters.isNotEmpty() && letters.all { it.isUpperCase() }
+        return when {
+            isShort && chapterMarker.matches(t) -> BlockKind.HEADING
+            isShort && allCaps -> BlockKind.HEADING
+            else -> BlockKind.BODY
+        }
     }
 
     /** Renders scanned PDF pages on demand. PdfRenderer is single-threaded → guarded by a mutex. */
