@@ -32,7 +32,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import app.inkwell.reader.update.ApkUpdater
+import android.content.Intent
+import android.net.Uri
 import app.inkwell.reader.update.UpdateChecker
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
@@ -115,7 +116,7 @@ fun AboutScreen(onBack: () -> Unit) {
     }
 }
 
-/** In-app update: check GitHub Releases, then download and launch the installer. */
+/** In-app update: check GitHub Releases and, if newer, open the release page to download it. */
 @Composable
 private fun UpdateSection(currentVersion: String) {
     val context = LocalContext.current
@@ -123,15 +124,20 @@ private fun UpdateSection(currentVersion: String) {
 
     // null = idle; other values drive the UI below.
     var checking by remember { mutableStateOf(false) }
-    var downloading by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
     var available by remember { mutableStateOf<UpdateChecker.Available?>(null) }
 
-    val busy = checking || downloading
+    val busy = checking
     val faint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
 
+    fun openUpdatePage() = runCatching {
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW, Uri.parse(UPDATE_URL))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+
     when {
-        downloading -> StatusRow("Se descarcă actualizarea…")
         checking -> StatusRow("Se verifică actualizările…")
         available != null -> {
             val info = available!!
@@ -141,25 +147,10 @@ private fun UpdateSection(currentVersion: String) {
                 fontWeight = FontWeight.SemiBold,
             )
             Spacer(Modifier.height(10.dp))
-            OutlinedButton(
-                onClick = {
-                    scope.launch {
-                        downloading = true
-                        message = null
-                        val file = ApkUpdater.download(context, info.apkUrl)
-                        downloading = false
-                        if (file != null) {
-                            runCatching { ApkUpdater.install(context, file) }
-                                .onFailure { message = "Nu pot porni instalarea." }
-                        } else {
-                            message = "Descărcarea a eșuat."
-                        }
-                    }
-                },
-            ) {
+            OutlinedButton(onClick = { openUpdatePage() }) {
                 Icon(Icons.Filled.Download, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Descarcă și instalează")
+                Text("Descarcă actualizarea")
             }
         }
         else -> {
