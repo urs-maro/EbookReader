@@ -1,0 +1,16 @@
+.gradle/
+build/
+app/build/
+local.properties
+*.iml
+.idea/
+captures/
+.cxx/
+samples/build/
+# Signing — keep private, never commit
+crio-release.jks
+keystore.properties
+*.jks
+*.keystore
+
+.kotlin/
