@@ -81,7 +81,7 @@ fun AboutScreen(onBack: () -> Unit) {
             )
             Spacer(Modifier.height(24.dp))
             Text(
-                "CRIO Books Reader",
+                "CRIO-Books-Reader",
                 style = MaterialTheme.typography.headlineMedium,
                 fontWeight = FontWeight.Bold,
             )
