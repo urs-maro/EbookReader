@@ -31,6 +31,14 @@ object UpdateChecker {
     /** A newer release with a downloadable APK, ready to present to the user. */
     data class Available(val version: String, val apkUrl: String, val notes: String?)
 
+    /** Outcome of a check so the UI can tell "up to date" apart from "couldn't check". */
+    sealed interface Result {
+        data class NewVersion(val info: Available) : Result
+        data object UpToDate : Result
+        /** No release found, no APK asset, or a network/parse error. */
+        data object Unavailable : Result
+    }
+
     private val json = Json { ignoreUnknownKeys = true }
 
     /** Fetches the latest release, or null on any network/parse error. */
@@ -51,14 +59,16 @@ object UpdateChecker {
     }
 
     /** Resolves whether [current] should be updated to the latest release, with its APK asset. */
-    suspend fun check(current: String): Available? {
-        val release = fetchLatest() ?: return null
-        if (!isNewer(current, release.tag_name)) return null
-        val apk = pickApk(release.assets) ?: return null
-        return Available(
-            version = release.tag_name.trim().removePrefix("v").removePrefix("V"),
-            apkUrl = apk.browser_download_url,
-            notes = release.body?.takeIf { it.isNotBlank() },
+    suspend fun check(current: String): Result {
+        val release = fetchLatest() ?: return Result.Unavailable
+        if (!isNewer(current, release.tag_name)) return Result.UpToDate
+        val apk = pickApk(release.assets) ?: return Result.Unavailable
+        return Result.NewVersion(
+            Available(
+                version = release.tag_name.trim().removePrefix("v").removePrefix("V"),
+                apkUrl = apk.browser_download_url,
+                notes = release.body?.takeIf { it.isNotBlank() },
+            ),
         )
     }
 

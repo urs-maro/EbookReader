@@ -169,12 +169,14 @@ private fun UpdateSection(currentVersion: String) {
                     scope.launch {
                         checking = true
                         message = null
-                        val result = runCatching { UpdateChecker.check(currentVersion) }.getOrNull()
+                        val result = runCatching { UpdateChecker.check(currentVersion) }
+                            .getOrDefault(UpdateChecker.Result.Unavailable)
                         checking = false
-                        if (result != null) {
-                            available = result
-                        } else {
-                            message = "Ești la zi."
+                        when (result) {
+                            is UpdateChecker.Result.NewVersion -> available = result.info
+                            is UpdateChecker.Result.UpToDate -> message = "Ești la zi."
+                            is UpdateChecker.Result.Unavailable ->
+                                message = "Niciun release găsit (verifică conexiunea)."
                         }
                     }
                 },
