@@ -125,7 +125,7 @@ private fun UpdateSection(currentVersion: String) {
     // null = idle; other values drive the UI below.
     var checking by remember { mutableStateOf(false) }
     var message by remember { mutableStateOf<String?>(null) }
-    var available by remember { mutableStateOf<UpdateChecker.Available?>(null) }
+    var newVersion by remember { mutableStateOf<String?>(null) }
 
     val busy = checking
     val faint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f)
@@ -139,10 +139,9 @@ private fun UpdateSection(currentVersion: String) {
 
     when {
         checking -> StatusRow("Se verifică actualizările…")
-        available != null -> {
-            val info = available!!
+        newVersion != null -> {
             Text(
-                "Versiune nouă disponibilă: v${info.version}",
+                "Versiune nouă disponibilă: v$newVersion",
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = FontWeight.SemiBold,
             )
@@ -164,7 +163,7 @@ private fun UpdateSection(currentVersion: String) {
                             .getOrDefault(UpdateChecker.Result.Unavailable)
                         checking = false
                         when (result) {
-                            is UpdateChecker.Result.NewVersion -> available = result.info
+                            is UpdateChecker.Result.NewVersion -> newVersion = result.version
                             is UpdateChecker.Result.UpToDate -> message = "Ești la zi."
                             is UpdateChecker.Result.Unavailable ->
                                 message = "Niciun release găsit (verifică conexiunea)."

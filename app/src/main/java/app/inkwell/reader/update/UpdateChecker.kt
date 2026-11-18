@@ -2,77 +2,56 @@ package app.inkwell.reader.update
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.json.Json
 import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * Checks the project's public GitHub Releases for a newer build. The version-comparison and
- * asset-selection logic is pure (no Android types) so it is unit-testable on the JVM; only
- * [fetchLatest] touches the network.
+ * Checks the project's auto-published GitHub release for a newer build. CI always publishes to
+ * the fixed `latest` tag and puts the app version in the release *name* ("CRIO-Books-Reader
+ * v0.3.0"), so we read the version from there. Pure helpers are unit-tested on the JVM; only
+ * [fetchReleaseJson] touches the network.
  */
 object UpdateChecker {
 
-    private const val LATEST_API =
-        "https://api.github.com/repos/urs-maro/EbookReader/releases/latest"
-
-    @Serializable
-    data class Asset(val name: String = "", val browser_download_url: String = "")
-
-    @Serializable
-    data class Release(
-        val tag_name: String = "",
-        val name: String? = null,
-        val body: String? = null,
-        val assets: List<Asset> = emptyList(),
-    )
-
-    /** A newer release with a downloadable APK, ready to present to the user. */
-    data class Available(val version: String, val apkUrl: String, val notes: String?)
+    /** The page the About screen opens so the user can download the new APK. */
+    const val RELEASES_PAGE = "https://github.com/urs-maro/EbookReader/releases/latest"
+    private const val RELEASE_API =
+        "https://api.github.com/repos/urs-maro/EbookReader/releases/tags/latest"
 
     /** Outcome of a check so the UI can tell "up to date" apart from "couldn't check". */
     sealed interface Result {
-        data class NewVersion(val info: Available) : Result
+        data class NewVersion(val version: String) : Result
         data object UpToDate : Result
-        /** No release found, no APK asset, or a network/parse error. */
         data object Unavailable : Result
     }
 
-    private val json = Json { ignoreUnknownKeys = true }
-
-    /** Fetches the latest release, or null on any network/parse error. */
-    suspend fun fetchLatest(): Release? = withContext(Dispatchers.IO) {
-        runCatching {
-            val conn = (URL(LATEST_API).openConnection() as HttpURLConnection).apply {
-                connectTimeout = 15_000
-                readTimeout = 15_000
-                setRequestProperty("Accept", "application/vnd.github+json")
-                setRequestProperty("User-Agent", "CRIO-Books-Reader")
-            }
-            conn.use {
-                if (it.responseCode !in 200..299) return@runCatching null
-                val text = it.inputStream.use { s -> s.readBytes().toString(Charsets.UTF_8) }
-                json.decodeFromString<Release>(text)
-            }
-        }.getOrNull()
+    suspend fun check(current: String): Result = withContext(Dispatchers.IO) {
+        val json = fetchReleaseJson() ?: return@withContext Result.Unavailable
+        val latest = versionFromRelease(json) ?: return@withContext Result.Unavailable
+        if (isNewer(current, latest)) Result.NewVersion(latest) else Result.UpToDate
     }
 
-    /** Resolves whether [current] should be updated to the latest release, with its APK asset. */
-    suspend fun check(current: String): Result {
-        val release = fetchLatest() ?: return Result.Unavailable
-        if (!isNewer(current, release.tag_name)) return Result.UpToDate
-        val apk = pickApk(release.assets) ?: return Result.Unavailable
-        return Result.NewVersion(
-            Available(
-                version = release.tag_name.trim().removePrefix("v").removePrefix("V"),
-                apkUrl = apk.browser_download_url,
-                notes = release.body?.takeIf { it.isNotBlank() },
-            ),
-        )
-    }
+    /** Fetches the `latest` release JSON, or null on any network error. */
+    private fun fetchReleaseJson(): String? = runCatching {
+        val c = (URL(RELEASE_API).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 15_000
+            readTimeout = 15_000
+            setRequestProperty("Accept", "application/vnd.github+json")
+            setRequestProperty("User-Agent", "CRIO-Books-Reader")
+        }
+        try {
+            if (c.responseCode !in 200..299) return@runCatching null
+            c.inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            c.disconnect()
+        }
+    }.getOrNull()
 
-    /** True when [latest] is a strictly higher version than [current] (e.g. "v0.2.0" > "0.1.0"). */
+    /** Reads the version out of the release name, e.g. "CRIO-Books-Reader v0.3.0" -> "0.3.0". */
+    fun versionFromRelease(json: String): String? =
+        Regex("\"name\"\\s*:\\s*\"[^\"]*?v(\\d+(?:\\.\\d+)*)\"").find(json)?.groupValues?.get(1)
+
+    /** True when [latest] is a strictly higher version than [current] (e.g. "0.10" > "0.9"). */
     fun isNewer(current: String, latest: String): Boolean {
         val c = parseVersion(current)
         val l = parseVersion(latest)
@@ -90,18 +69,4 @@ object UpdateChecker {
             .split('.', '-', '+', '_')
             .mapNotNull { seg -> seg.takeWhile(Char::isDigit).toIntOrNull() }
             .ifEmpty { listOf(0) }
-
-    /** Picks the APK asset to install, preferring one whose name mentions "release". */
-    fun pickApk(assets: List<Asset>): Asset? {
-        val apks = assets.filter { it.name.endsWith(".apk", ignoreCase = true) }
-        return apks.firstOrNull { it.name.contains("release", ignoreCase = true) }
-            ?: apks.firstOrNull()
-    }
-
-    private inline fun <T> HttpURLConnection.use(block: (HttpURLConnection) -> T): T =
-        try {
-            block(this)
-        } finally {
-            disconnect()
-        }
 }
